@@ -2,6 +2,7 @@
 import json
 import pickle
 from contextlib import contextmanager
+from datetime import datetime
 
 from airflow.configuration import conf
 from airflow.models import DagModel, DagRun, TaskInstance, TaskFail, XCom
@@ -126,6 +127,46 @@ def get_dag_duration_info():
             )
             .all()
         )
+
+
+def get_dag_failure_info():
+    """Number of times a dag has failed since last success."""
+    with session_scope(Session) as session:
+        last_successful_run = session.query(
+            DagRun.dag_id,
+            func.max(DagRun.execution_date).label("last_success_date")
+        ).filter(
+            DagRun.state == "success"
+        ).group_by(
+            DagRun.dag_id
+        ).subquery()
+
+        number_of_failures = session.query(
+            DagRun.dag_id,
+            func.count(DagRun.dag_id).label("failed_since_last_success")
+        ).join(
+            last_successful_run,
+            DagRun.dag_id == last_successful_run.c.dag_id,
+            isouter=True
+        ).filter(
+            DagRun.execution_date > func.coalesce(
+                last_successful_run.c.last_success_date,
+                datetime.min
+            ),
+            DagRun.state == "failed"
+        ).group_by(
+            DagRun.dag_id
+        ).subquery()
+
+        return session.query(
+            DagRun.dag_id,
+            func.coalesce(number_of_failures.c.failed_since_last_success, 0).label("failures")
+        ).join(
+            number_of_failures,
+            DagRun.dag_id == number_of_failures.c.dag_id,
+            isouter=True
+        ).distinct().all()
+
 
 
 ######################
@@ -417,6 +458,18 @@ class MetricsCollector(object):
             ).total_seconds()
             dag_duration.add_metric([dag.dag_id], dag_duration_value)
         yield dag_duration
+
+        dag_failure_metric = GaugeMetricFamily(
+            "airflow_dag_failures_since_last_success",
+            (
+                "Shows the number of times a dag has failed since it last succeeded,"
+                " or total number of failures if it has never succeeded."
+            ),
+            labels=["dag_id"],
+        )
+        for dag in get_dag_failure_info():
+            dag_failure_metric.add_metric([dag.dag_id], dag.failures)
+        yield dag_failure_metric
 
         # Scheduler Metrics
         dag_scheduler_delay = GaugeMetricFamily(
