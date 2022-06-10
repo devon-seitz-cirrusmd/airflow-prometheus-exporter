@@ -7,7 +7,7 @@ from datetime import datetime
 from airflow.configuration import conf
 from airflow.models import DagModel, DagRun, TaskInstance, TaskFail, XCom
 from airflow.plugins_manager import AirflowPlugin
-from airflow.settings import RBAC, Session
+from airflow.settings import Session
 from airflow.utils.state import State
 from airflow.utils.log.logging_mixin import LoggingMixin
 from flask import Response
@@ -19,7 +19,7 @@ from sqlalchemy import and_, func
 from airflow_prometheus_exporter.xcom_config import load_xcom_config
 
 CANARY_DAG = "canary_dag"
-
+RBAC = True
 
 @contextmanager
 def session_scope(session):
